@@ -16,12 +16,17 @@ class heating:
   def __init__(self):
     ######## input ############
     self.logfile_name = 'Momo_dynamics_PlanB_20170619(Rev6.2).csv'
+    self.log_all = np.loadtxt(self.logfile_name, delimiter=',', skiprows=1)
+    self.time = self.log_all[:,0]
+    self.altitude = self.log_all[:,5]
+    self.mach = self.log_all[:,22]
+    self.array_length = len(self.time)
 
     self.T_surface_init = 15.0 # [degC] flight object initial temperature
     self.T_surface_init += 273.15 # [K]
     self.R_nose = 0.02 # [m] nose-cone blunt radius
     self.rho_nose = 1270.0 # [kg/m^3] nose-cone material dencity
-    self.thickness = 0.025 # [m] nose-cone thickness
+    self.thickness = 0.025 # [m] nose-cone thickness at stagnation point
     self.specific_heat = 1591.0 # [-] nose-cone material
     self.epsilon = 0.8 # [-] 表面放射率
     ###########################
@@ -31,14 +36,7 @@ class heating:
     self.sigma = 5.669 * 10**(-8) # Stefan-Boltzmann constant
 
     self.T0, self.rho0, self.Cs0 = env.std_atmo(0.0) # [K, kg/m^3]
-    self.g0 = env.gravity(0.0) # [m/s^2]
-
-    self.log_all = np.loadtxt(self.logfile_name, delimiter=',', skiprows=1)
-    self.time = self.log_all[:,0]
-    self.altitude = self.log_all[:,5]
-    self.mach = self.log_all[:,22]
-    self.array_length = len(self.time)
-        
+    self.g0 = env.gravity(0.0) # [m/s^2]       
 
 
   def calculation(self):
@@ -49,7 +47,6 @@ class heating:
     self.vel = np.empty(self.array_length)
     self.R = np.empty(self.array_length)
     self.uc = np.empty(self.array_length)
-    self.hsw = np.empty(self.array_length) # enthalpy from stagnation-point to body-surface
     self.qconv = np.empty(self.array_length) # convection heating
     self.qrad = np.empty(self.array_length) # radiative heating
     self.T_surface_thinskin = np.empty(self.array_length) # thin-skin method
@@ -59,6 +56,7 @@ class heating:
       return q_convection
     
     def q_radiation(R_nose, vel, rho):
+      # ref. Tauberの経験式
       def radiative_heating_velocity_function(vel):
         # input:[m/s]
         vel = np.abs(vel) / 1000.0 # [km/s]
@@ -86,7 +84,6 @@ class heating:
     self.vel[0] = self.mach[0] * self.Cs[0]
     self.R[0] = self.Re + self.altitude[0] # [m]
     self.uc[0] = np.sqrt(self.g0 * self.Re**2 / self.R[0]) # [m/s]
-    self.hsw[0] = self.Cp * self.T[0] # [J/kg]
     self.qconv[0] = q_convection(self.R_nose, self.rho[0], self.rho0, self.vel[0], self.uc[0]) # convection heating
     self.qrad[0] = q_radiation(self.R_nose, self.vel[0], self.rho[0]) # radiative heating
     self.T_surface_thinskin[0] = self.T_surface_init
@@ -98,7 +95,6 @@ class heating:
       self.vel[i] = self.mach[i] * self.Cs[i]
       self.R[i] = self.Re + self.altitude[i] # [m]
       self.uc[i] = np.sqrt(self.g0 * self.Re**2 / self.R[i]) # [m/s]
-      self.hsw[i] = self.Cp * self.T[i] # [J/kg]
       self.qconv[i] = q_convection(self.R_nose, self.rho[i], self.rho0, self.vel[i], self.uc[i]) # convection heating
       self.qrad[i] = q_radiation(self.R_nose, self.vel[i], self.rho[i]) # radiative heating
       self.T_surface_thinskin[i] = self.T_surface_thinskin[i-1] + self.dt * deltaT_surface_thinskin(self.T_surface_thinskin[i-1], self.qconv[i], self.qrad[i], self.sigma, self.epsilon, self.specific_heat, self.rho_nose, self.thickness) # thin-skin method
