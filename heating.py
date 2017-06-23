@@ -6,6 +6,10 @@
 # * 宇宙飛行体の熱気体力学
 # * Heat Transfer to Satellite Vehicles Re-entering the Atomosphere
 # * 超軌道足度飛行体の輻射加熱環境に関する研究
+# 
+# 表面温度モデル：気流から与えられる熱流束と再放射熱の和が瞬間的に表面温度と等しくなるようになっている。
+# アブレーションモデル：設定したアブレーション温度に対する表面温度の差分を潜熱で消せるようにアブレーション厚さ(≒アブレーション足度)を決める
+# 
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -25,10 +29,17 @@ class heating:
     self.T_surface_init = 15.0 # [degC] flight object initial temperature
     self.T_surface_init += 273.15 # [K]
     self.R_nose = 0.02 # [m] nose-cone blunt radius
+    self.thickness_init = 0.025 # [m] nose-cone thickness at stagnation point    
     self.rho_nose = 1270.0 # [kg/m^3] nose-cone material dencity
-    self.thickness = 0.025 # [m] nose-cone thickness at stagnation point
-    self.specific_heat = 1591.0 # [-] nose-cone material
+    self.specific_heat = 1591.0 # [J/kg-K] nose-cone material
     self.epsilon = 0.8 # [-] 表面放射率
+
+    # ablate
+    self.vaporization_heat = 9288.48 # [kJ/kg]
+    self.vaporization_heat *= 1000.0 # [J/kg]
+    self.T_ablate = 300.0 # [degC]
+    self.T_ablate += 273.15 # [K]
+
     ###########################
 
     self.Re = 6371000 #[m] earth surface
@@ -50,9 +61,11 @@ class heating:
     self.qconv = np.empty(self.array_length) # convection heating
     self.qrad = np.empty(self.array_length) # radiative heating
     self.T_surface_thinskin = np.empty(self.array_length) # thin-skin method
+    self.thickness = np.empty(self.array_length)
 
     def q_convection(R_nose, rho, rho0, vel, uc):
-      q_convection = 11030.0 / np.sqrt(R_nose) * (rho / rho0)**0.5 * (np.abs(vel) / uc)**3.05 * 10**4 # [W/m^2]
+      # ref. Detra-Kemp-Riddellの式
+      q_convection = 11030.0 / np.sqrt(R_nose) * (rho / self.rho0)**0.5 * (np.abs(vel) / uc)**3.05 * 10**4 # [W/m^2]
       return q_convection
     
     def q_radiation(R_nose, vel, rho):
@@ -87,6 +100,7 @@ class heating:
     self.qconv[0] = q_convection(self.R_nose, self.rho[0], self.rho0, self.vel[0], self.uc[0]) # convection heating
     self.qrad[0] = q_radiation(self.R_nose, self.vel[0], self.rho[0]) # radiative heating
     self.T_surface_thinskin[0] = self.T_surface_init
+    self.thickness[0] = self.thickness_init
 
     for i in range(1, self.array_length):
       self.dt = self.time[i] - self.time[i-1]
@@ -97,9 +111,14 @@ class heating:
       self.uc[i] = np.sqrt(self.g0 * self.Re**2 / self.R[i]) # [m/s]
       self.qconv[i] = q_convection(self.R_nose, self.rho[i], self.rho0, self.vel[i], self.uc[i]) # convection heating
       self.qrad[i] = q_radiation(self.R_nose, self.vel[i], self.rho[i]) # radiative heating
-      self.T_surface_thinskin[i] = self.T_surface_thinskin[i-1] + self.dt * deltaT_surface_thinskin(self.T_surface_thinskin[i-1], self.qconv[i], self.qrad[i], self.sigma, self.epsilon, self.specific_heat, self.rho_nose, self.thickness) # thin-skin method
-      
-      print(self.time[i], self.T[i],self.qconv[i], self.qrad[i], self.T_surface_thinskin[i])
+      self.T_surface_thinskin[i] = self.T_surface_thinskin[i-1] + self.dt * deltaT_surface_thinskin(self.T_surface_thinskin[i-1], self.qconv[i], self.qrad[i], self.sigma, self.epsilon, self.specific_heat, self.rho_nose, self.thickness_init) # thin-skin method
+      if self.T_surface_thinskin[i] > self.T_ablate:
+        self.thickness[i] = self.thickness[i-1] - (self.T_surface_thinskin[i] - self.T_ablate) * self.specific_heat * self.thickness[i-1] / self.vaporization_heat)
+        self.T_surface_thinskin[i] = self.T_ablate
+      else:
+        self.thickness[i] = self.thickness[i-1]
+
+      print(self.time[i], self.T[i],self.qconv[i], self.qrad[i], self.T_surface_thinskin[i], self.thickness[i])
 
 if __name__ == '__main__':
   obj = heating()
@@ -117,6 +136,10 @@ if __name__ == '__main__':
   plt.plot(obj.time, obj.T_surface_thinskin)
   plt.xlabel('time [sec]')
   plt.ylabel('T_surface [K]')
+  plt.figure(2)
+  plt.plot(obj.time, obj.thickness*1000.0)
+  plt.xlabel('time [sec]')
+  plt.ylabel('thickness [mm]')
 
   plt.figure(4)
   plt.plot(obj.time, obj.altitude)
