@@ -12,31 +12,44 @@ def std_atmo(altitude):
   g0 = 9.80665
 
   # atmospheric layer
-  h_list  = [0.0, 11.0e3, 20.0e3, 32.0e3, 47.0e3, 51.0e3, 71.0e3, 84.852e3] # geopotential height [m]
-  TG_list = [-6.5e-3, 0.0, 1.0e-3, 2.8e-3, 0, -2.8e-3, -2.0e-3, 0.0] # Temp. gradient [K/m]
-  T_list  = [288.15, 216.65, 216.65, 228.65, 270.65, 270.65, 214.65, 186.946] # [K]
-  P_list  = [101325.0, 22632.0, 5474.9, 868.02, 110.91, 66.939, 3.9564, 0.3734] # [Pa]
+  height_list  = [0.0, 11.0e3, 20.0e3, 32.0e3, 47.0e3, 51.0e3, 71.0e3, 84.852e3] # geopotential height [m]
+  temp_grad_list = [-6.5e-3, 0.0, 1.0e-3, 2.8e-3, 0, -2.8e-3, -2.0e-3, 0.0] # Temp. gradient [K/m]
+  temp_list  = [288.15, 216.65, 216.65, 228.65, 270.65, 270.65, 214.65, 186.946] # [K]
+  pressure_list  = [101325.0, 22632.0, 5474.9, 868.02, 110.91, 66.939, 3.9564, 0.3734] # [Pa]
 
   h = altitude * Re / (Re + altitude) # geometric altitude => geopotential height
 
   k = 0 # dafault layer
   for i in range(8):
-    if h < h_list[i]:
+    if h < height_list[i]:
       k = i - 1
       break
-    elif h >= h_list[7]:
+    elif h >= height_list[7]:
       k = 7
       break
   
-  Temperature = T_list[k] + TG_list[k] * (h - h_list[k]) # [K]
-  if TG_list[k] == 0.0:
-    Pressure = P_list[k] * np.exp(g0 / R * (h_list[k] - h) / T_list[k])
+  temperature = temp_list[k] + temp_grad_list[k] * (h - height_list[k]) # [K]
+  if temp_grad_list[k] == 0.0:
+    pressure = pressure_list[k] * np.exp(g0 / R * (height_list[k] - h) / temp_list[k])
   else:
-    Pressure = P_list[k] * np.power(T_list[k] / Temperature, g0 / R / TG_list[k]) # [Pa]
-  Density = Pressure / (R * Temperature) # [kg/m^3]
-  SoundSpeed = np.sqrt(gamma * R * Temperature) # [m/s]
+    pressure = pressure_list[k] * np.power(temp_list[k] / temperature, g0 / R / temp_grad_list[k]) # [Pa]
+  density = pressure / (R * temperature) # [kg/m^3]
+  soundSpeed = np.sqrt(gamma * R * temperature) # [m/s]
   
-  return Temperature, Density, SoundSpeed
+  return temperature, pressure, density, soundSpeed
+
+def std_temp(altitude):
+  temp, press, rho, Cs = std_atmo(altitude)
+  return temp
+def std_pressure(altitude):
+  temp, press, rho, Cs = std_atmo(altitude)
+  return press
+def std_density(altitude):
+  temp, press, rho, Cs = std_atmo(altitude)
+  return rho
+def std_soundspeed(altitude):
+  temp, press, rho, Cs = std_atmo(altitude)
+  return Cs     
 
 def gravity(altitude):
   # altitude [m]
