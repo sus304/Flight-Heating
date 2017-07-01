@@ -19,8 +19,8 @@ import environment as env
 class NoseCone:
     def __init__(self):
         self.T_surface_init = 15.0 + 273.15  # [K] initial temperature
-        self.R_nosetip = 0.02  # [m] blunt radius
-        self.thickness = 0.02  # [m] thickness at stagnation point
+        self.R_nosetip = 0.2  # [m] blunt radius
+        self.thickness = 0.03  # [m] thickness at stagnation point
         self.rho = 1270.0  # [kg/m^3] material density
         self.c = 1592.0  # [J/kg-K] specific heat
         self.epsilon = 0.8  # [-] surface emissivity
@@ -33,11 +33,21 @@ class FlightHeating:
     Calculate aerodynamic heating and ablation cooling during flight from flight log file speed, altitude.
     '''
     def __init__(self):
-        self.logfile_name = 'Momo_dynamics_PlanB_20170619(Rev6.2).csv'
+        # self.logfile_name = 'Momo_dynamics_PlanB_20170619(Rev6.2).csv'
+        # self.log_all = np.loadtxt(self.logfile_name, delimiter=',', skiprows=1)
+        # self.time = self.log_all[:,0]
+        # self.altitude = self.log_all[:,5]
+        # self.mach = self.log_all[:,22]   
+        # def mach2vel(mach, alt):
+        #     return mach * env.std_soundspeed(alt)     
+        # self.vel = list(map(mach2vel, self.mach, self.altitude))
+        # self.array_length = len(self.time)
+
+        self.logfile_name = 'hayabusa_result.csv'
         self.log_all = np.loadtxt(self.logfile_name, delimiter=',', skiprows=1)
         self.time = self.log_all[:,0]
-        self.altitude = self.log_all[:,5]
-        self.mach = self.log_all[:,22]
+        self.vel = self.log_all[:,1]
+        self.altitude = self.log_all[:,2]
         self.array_length = len(self.time)
 
     def heating(self, obj):
@@ -64,12 +74,11 @@ class FlightHeating:
             dt = self.time[i] - self.time[i-1]
             rho_air = env.std_density(self.altitude[i])
             g = env.gravity(self.altitude[i])
-            vel = self.mach[i] * env.std_soundspeed(self.altitude[i])  # [m/s]
             R = Re + self.altitude[i]  # [m] distance from center of earth
-            uc = np.sqrt(g0 * Re**2 / R)  # [m/s] circular velocity
+            uc = np.sqrt(g0 * Re**2 / Re)  # [m/s] circular velocity
 
             # ref. Detra-Kemp-Riddell
-            self.q_conv[i] = 11030.0 / np.sqrt(obj.R_nosetip) * (rho_air / env.std_density(0.0))**0.5 * (np.abs(vel) / uc)**3.05 * 10**4  # [W/m^2]
+            self.q_conv[i] = 11030.0 / np.sqrt(obj.R_nosetip) * (rho_air / env.std_density(0.0))**0.5 * (np.abs(self.vel[i]) / uc)**3.05 * 10**4  # [W/m^2]
             # ref. Tauber
             def exp_n(R_nose, vel, rho):
                 # input:[m, m/s, kg/m^3]
@@ -80,7 +89,7 @@ class FlightHeating:
                     return min(0.5, n)
                 else:
                     return min(0.6, n)
-            self.q_rad[i] = 4.736 * 10**4 * obj.R_nosetip**exp_n(obj.R_nosetip, vel, rho_air) * rho_air**1.22 * radiative_vel_func(vel/1000.0) * 10**4  # [W/m^2]
+            self.q_rad[i] = 4.736 * 10**4 * obj.R_nosetip**exp_n(obj.R_nosetip, self.vel[i], rho_air) * rho_air**1.22 * radiative_vel_func(self.vel[i]/1000.0) * 10**4  # [W/m^2]
             self.T_surface[i] = self.T_surface[i-1] + dt * (self.q_conv[i] + self.q_rad[i] - sigma * obj.epsilon * self.T_surface[i-1]**4) / (obj.c * obj.rho * obj.thickness)  # [K]
             if self.T_surface[i] < obj.T_ablation:
                 self.thickness[i] = self.thickness[i-1]
@@ -97,8 +106,8 @@ if __name__ == '__main__':
     np.savetxt('heating_log.csv',result, delimiter=',')
 
     plt.figure(0)
-    plt.plot(solver.time, solver.q_conv/10**6)
-    plt.plot(solver.time, solver.q_rad/10**6)
+    plt.plot(solver.time, solver.q_conv/10**6, label='convection')
+    plt.plot(solver.time, solver.q_rad/10**6, label='radiation')
     plt.xlabel('time [sec]')
     plt.ylabel('q_dot [MW/m2]')
     plt.figure(1)
