@@ -12,9 +12,10 @@ Ref.
 * 超軌道速度飛行体の輻射加熱環境に関する研究
 '''
 import numpy as np
+from scipy.integrate import odeint
 import matplotlib.pyplot as plt
 from scipy import interpolate
-import environment as env
+# import environment as env
 
 class NoseCone:
     def __init__(self):
@@ -32,55 +33,31 @@ class FlightHeating:
     '''
     Calculate aerodynamic heating and ablation cooling during flight from flight log file speed, altitude.
     '''
-    def __init__(self):
-        # self.logfile_name = 'Momo_dynamics_PlanB_20170619(Rev6.2).csv'
-        # self.log_all = np.loadtxt(self.logfile_name, delimiter=',', skiprows=1)
-        # self.time = self.log_all[:,0]
-        # self.altitude = self.log_all[:,5]
-        # self.mach = self.log_all[:,22]   
-        # def mach2vel(mach, alt):
-        #     return mach * env.std_soundspeed(alt)     
-        # self.vel = list(map(mach2vel, self.mach, self.altitude))
-        # self.array_length = len(self.time)
-
-        self.logfile_name = 'hayabusa_result.csv'
-        self.log_all = np.loadtxt(self.logfile_name, delimiter=',', skiprows=1)
-        self.time = self.log_all[:,0]
-        self.vel = self.log_all[:,1]
-        self.altitude = self.log_all[:,2]
-        self.array_length = len(self.time)
+    def __init__(self, time_array, vel_array, altitude_array):
+        self.time = time_array
+        self.vel = vel_array
+        self.altitude = altitude_array
 
     def heating(self, obj):
+        env = Environment()
         Re = 6371000  #[m] earth surface
         cp = 1006.0  # [J/kg-K] specific heat at pressure constant of air
         sigma = 5.669 * 10**(-8)  # Stefan-Boltzmann constant
         g0 = env.gravity(0.0)  # [m/s^2]
 
-        self.q_conv = np.empty(self.array_length)
-        self.q_conv[0] = 0.0
-        self.q_rad = np.empty(self.array_length)
-        self.q_rad[0] = 0.0
-        self.T_surface = np.empty(self.array_length)
-        self.T_surface[0] = obj.T_surface_init
-        self.thickness = np.empty(self.array_length)
-        self.thickness[0] = obj.thickness
-
         vel_array = np.array([9.0, 9.25, 9.5, 9.75, 10.0, 10.25, 10.5, 10.75, 11.0, 11.5, 12.0, 12.5, 13.0, 13.5, 14.0, 14.5, 15.0, 15.5, 16.0])
         func_array = np.array([1.5, 4.3, 9.7, 18.5, 35.0, 55.0, 81.0, 115.0, 151.0, 238.0, 359.0, 495.0, 660.0, 850.0, 1065.0, 1313.0, 1550.0, 1780.0, 2040.0])
         radiative_vel_func = interpolate.interp1d(vel_array, func_array, bounds_error = False, fill_value = (func_array[0], func_array[-1]))
 
-
-        for i in range(1, self.array_length):
-            dt = self.time[i] - self.time[i-1]
-            rho_air = env.std_density(self.altitude[i])
-            g = env.gravity(self.altitude[i])
-            R = Re + self.altitude[i]  # [m] distance from center of earth
-            uc = np.sqrt(g0 * Re**2 / Re)  # [m/s] circular velocity
-
-            # ref. Detra-Kemp-Riddell
-            self.q_conv[i] = 11030.0 / np.sqrt(obj.R_nosetip) * (rho_air / env.std_density(0.0))**0.5 * (np.abs(self.vel[i]) / uc)**3.05 * 10**4  # [W/m^2]
-            # ref. Tauber
-            def exp_n(R_nose, vel, rho):
+        rho_air = env.get_std_density(self.altitude)
+        g = env.gravity(self.altitude)
+        R = Re + self.altitude
+        uc = np.sqrt(g0 * Re)
+        # ref. Detra-Kemp-Riddell
+        self.q_conv = 11030.0 / np.sqrt(obj.R_nosetip) * (rho_air / env.get_std_density(0.0))**0.5 * (np.abs(self.vel) / uc)**3.05 * 10**4  # [W/m^2]
+        # ref. Tauber
+        def exp_n(R_nose, vel, rho):
+            def eq(R_nose, vel, rho):
                 # input:[m, m/s, kg/m^3]
                 n = 1.072 * 10.0**6 * np.abs(vel)**(-1.88) * rho**(-0.325)
                 if R_nose <= 1.0:
@@ -89,18 +66,110 @@ class FlightHeating:
                     return min(0.5, n)
                 else:
                     return min(0.6, n)
-            self.q_rad[i] = 4.736 * 10**4 * obj.R_nosetip**exp_n(obj.R_nosetip, self.vel[i], rho_air) * rho_air**1.22 * radiative_vel_func(self.vel[i]/1000.0) * 10**4  # [W/m^2]
+            return np.array([eq(R_nose, v, rh) for v, rh in zip(vel, rho)])
+        self.q_rad = 4.736 * 10**4 * obj.R_nosetip**exp_n(obj.R_nosetip, self.vel, rho_air) * rho_air**1.22 * radiative_vel_func(self.vel/1000.0) * 10**4  # [W/m^2]
+
+        self.T_surface = np.zeros_like(self.time)
+        self.T_surface[0] = obj.T_surface_init
+        self.thickness = np.zeros_like(self.time)
+        self.thickness[0] = obj.thickness
+        for i in range(1, len(self.time)):
+            dt = self.time[i] - self.time[i-1]
             self.T_surface[i] = self.T_surface[i-1] + dt * (self.q_conv[i] + self.q_rad[i] - sigma * obj.epsilon * self.T_surface[i-1]**4) / (obj.c * obj.rho * obj.thickness)  # [K]
             if self.T_surface[i] < obj.T_ablation:
                 self.thickness[i] = self.thickness[i-1]
             else:
-                self.thickness[i] = self.thickness[i-1] - (self.T_surface[i] - obj.T_ablation) * obj.c * self.thickness[i-1] / obj.h_vaporization  # [m]
+                self.thickness[i] = self.thickness[i-1] - dt * (self.T_surface[i] - obj.T_ablation) * obj.c * self.thickness[i-1] / obj.h_vaporization  # [m]
                 self.T_surface[i] = obj.T_ablation
 
 
+class Environment:
+    # ref. 1976 standard atmosphere
+    # ジオポテンシャル高度を基準として標準大気の各層の気温減率から各大気値を算出
+    # 高度86 kmまで対応
+    def std_atmo(self, altitude):
+        # altitude [m]
+        R = 287.1
+        gamma = 1.4
+        Re = 6378.137e3 # Earth Radius [m]
+        g0 = 9.80665
+
+        # atmospheric layer
+        height_list  = [0.0, 11.0e3, 20.0e3, 32.0e3, 47.0e3, 51.0e3, 71.0e3, 84.852e3] # geopotential height [m]
+        temp_grad_list = [-6.5e-3, 0.0, 1.0e-3, 2.8e-3, 0, -2.8e-3, -2.0e-3, 0.0] # Temp. gradient [K/m]
+        temp_list  = [288.15, 216.65, 216.65, 228.65, 270.65, 270.65, 214.65, 186.946] # [K]
+        pressure_list  = [101325.0, 22632.0, 5474.9, 868.02, 110.91, 66.939, 3.9564, 0.3734] # [Pa]
+
+        h = altitude * Re / (Re + altitude) # geometric altitude => geopotential height
+
+        k = 0 # dafault layer
+        for i in range(8):
+            if h < height_list[i]:
+                k = i - 1
+                break
+            elif h >= height_list[7]:
+                k = 7
+                break
+
+        temperature = temp_list[k] + temp_grad_list[k] * (h - height_list[k]) # [K]
+        if temp_grad_list[k] == 0.0:
+            pressure = pressure_list[k] * np.exp(g0 / R * (height_list[k] - h) / temp_list[k])
+        else:
+            pressure = pressure_list[k] * np.power(temp_list[k] / temperature, g0 / R / temp_grad_list[k]) # [Pa]
+        density = pressure / (R * temperature) # [kg/m^3]
+        soundSpeed = np.sqrt(gamma * R * temperature) # [m/s]
+
+        return temperature, pressure, density, soundSpeed
+
+    def __get_std_atmo(self, altitude, index):
+        return self.std_atmo(altitude)[index]
+
+    def get_std_temp(self, altitude):
+        if isinstance(altitude, float) or isinstance(altitude, int):
+            return self.__get_std_atmo(altitude, 0)
+        else:
+            return np.array([self.__get_std_atmo(alt, 0) for alt in altitude])
+
+    def get_std_press(self, altitude):
+        if isinstance(altitude, float) or isinstance(altitude, int):
+            return self.__get_std_atmo(altitude, 1)
+        else:
+            return np.array([self.__get_std_atmo(alt, 1) for alt in altitude])
+
+    def get_std_density(self, altitude):
+        if isinstance(altitude, float) or isinstance(altitude, int):
+            return self.__get_std_atmo(altitude, 2)
+        else:
+            return np.array([self.__get_std_atmo(alt, 2) for alt in altitude])
+
+    def get_std_soundspeed(self, altitude):
+        if isinstance(altitude, float) or isinstance(altitude, int):
+            return self.__get_std_atmo(altitude, 3)
+        else:
+            return np.array([self.__get_std_atmo(alt, 3) for alt in altitude])
+
+    def gravity(self, altitude):
+        # altitude [m]
+        def eq(alt):
+            Re = 6378.137e3 # Earth Radius [m]
+            g0 = 9.80665
+            gravity = g0 * (Re / (Re + altitude)) ** 2 # [m/s^2]
+            return gravity
+        if isinstance(altitude, float) or isinstance(altitude, int):
+            return eq(altitude)
+        else:
+            return np.array([eq(alt) for alt in altitude])        
+
+
 if __name__ == '__main__':
-    obj = NoseCone()
-    solver = FlightHeating()
+    logfile_name = 'hayabusa_data.csv'
+    log_all = np.loadtxt(logfile_name, delimiter=',', skiprows=1)
+    time = log_all[:,0]
+    vel = log_all[:,1]
+    altitude = log_all[:,2]
+
+    solver = FlightHeating(time, vel, altitude)
+    obj = NoseCone()    
     solver.heating(obj)
     result = np.c_[solver.time, solver.q_conv, solver.q_rad, solver.T_surface, solver.thickness]
     np.savetxt('heating_log.csv',result, delimiter=',')
